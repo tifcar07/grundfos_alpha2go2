@@ -1,7 +1,7 @@
 {
   "domain": "grundfos_alpha2go",
   "name": "Grundfos Alpha2 Go",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Integration for Grundfos Alpha2 Go circulator pump via Bluetooth LE (GENIbus protocol)",
   "documentation": "https://github.com/tifcar07/grundfos_alpha2go2",
   "issue_tracker": "https://github.com/tifcar07/grundfos_alpha2go2/issues",
