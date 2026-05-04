@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Grundfos Alpha2 Go",
+        "description": "Sélectionnez votre circulateur ou saisissez son adresse Bluetooth manuellement.\n\nPour coupler la pompe, appuyez sur son bouton de connectivité (symbole Wi-Fi) jusqu'à ce que le voyant bleu clignote.",
+        "data": {
+          "address": "Adresse Bluetooth (MAC)",
+          "name": "Nom de la pompe"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "Grundfos Alpha2 Go détecté",
+        "description": "Confirmer l'ajout de **{name}** ({address}) ?\n\nAssurez-vous que la pompe est couplée à ce système Home Assistant (bouton de connectivité)."
+      }
+    },
+    "abort": {
+      "already_configured": "Cette pompe est déjà configurée.",
+      "no_devices_found": "Aucune pompe Grundfos détectée. Vérifiez le Bluetooth et la portée."
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter à la pompe. Vérifiez qu'elle est sous tension et à portée Bluetooth.",
+      "unknown": "Erreur inconnue."
+    }
+  },
+  "options": {}
+}

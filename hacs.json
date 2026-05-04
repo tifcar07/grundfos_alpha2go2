@@ -1,0 +1,8 @@
+{
+  "name": "Grundfos Alpha2 Go",
+  "description": "Home Assistant integration for Grundfos Alpha2 Go circulator pump via Bluetooth LE",
+  "render_readme": true,
+  "homeassistant": "2024.1.0",
+  "domains": ["sensor"],
+  "iot_class": "local_polling"
+}
