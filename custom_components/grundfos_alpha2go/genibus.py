@@ -9,7 +9,6 @@ from dataclasses import dataclass
 
 from bleak import BleakClient
 from bleak.exc import BleakError
-from bleak_retry_connector import establish_connection
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -137,7 +136,7 @@ def _decode_extended_class(apdu: bytes) -> PumpData:
 
 
 class Alpha2GoClient:
-    """Async BLE client using bleak-retry-connector for reliable connections."""
+    """Async BLE client for Grundfos Alpha2 Go."""
 
     def __init__(self, address: str) -> None:
         self._address = address
@@ -147,12 +146,11 @@ class Alpha2GoClient:
 
     async def connect(self) -> None:
         _LOGGER.debug("Connecting to Alpha2 Go at %s", self._address)
-        self._client = await establish_connection(
-            BleakClient,
-            device=self._address,
-            name=self._address,
+        self._client = BleakClient(
+            self._address,
             disconnected_callback=self._on_disconnect,
         )
+        await self._client.connect(timeout=20.0)
         await self._client.start_notify(GENI_RX_UUID, self._on_notify)
         _LOGGER.info("Connected to Alpha2 Go %s", self._address)
 
