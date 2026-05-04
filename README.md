@@ -1,3 +1,5 @@
+![Alpha2 Go](icon.png)
+
 # Grundfos Alpha2 Go — Intégration HACS pour Home Assistant
 
 Intégration Home Assistant pour le circulateur **Grundfos Alpha2 Go** via Bluetooth LE (protocole GENIbus).
