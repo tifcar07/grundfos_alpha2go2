@@ -1,4 +1,4 @@
-![Alpha2 Go](icon.png)
+![Alpha2 Go](hacs.png)
 
 # Grundfos Alpha2 Go — Intégration HACS pour Home Assistant
 
