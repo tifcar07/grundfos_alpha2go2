@@ -8,7 +8,7 @@
   "dependencies": [],
   "after_dependencies": ["bluetooth"],
   "codeowners": ["@tifcar07"],
-  "requirements": [],
+  "requirements": ["bleak-retry-connector>=3.0.0"],
   "bluetooth": [
     {
       "manufacturer_id": 1183,
