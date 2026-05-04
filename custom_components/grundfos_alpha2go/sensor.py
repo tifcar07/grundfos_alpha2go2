@@ -1,8 +1,7 @@
-"""Sensor platform for Grundfos Alpha2 Go."""
+"""Sensor platform for Grundfos Alpha2 Go - v1.0.2"""
 
 from __future__ import annotations
-
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from homeassistant.components.sensor import (
@@ -16,8 +15,6 @@ from homeassistant.const import (
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfPower,
-    UnitOfSpeed,
-    REVOLUTIONS_PER_MINUTE,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -28,20 +25,14 @@ from . import Alpha2GoCoordinator
 from .const import CONF_ADDRESS, CONF_NAME, DOMAIN
 from .genibus import PumpData
 
-# Unit not yet in HA constants for older versions – define locally as fallback
-try:
-    from homeassistant.const import UnitOfVolumeFlowRate
-    UNIT_FLOW = UnitOfVolumeFlowRate.CUBIC_METERS_PER_HOUR
-except ImportError:
-    UNIT_FLOW = "m³/h"
-
-UNIT_HEAD = "m"   # metres of head (pressure height)
+UNIT_FLOW = "m³/h"
+UNIT_HEAD = "m"
+UNIT_RPM  = "rpm"
 
 
 @dataclass(frozen=True)
 class Alpha2GoSensorDescription(SensorEntityDescription):
-    """Describes a single Alpha2 Go sensor."""
-    value_fn: Callable[[PumpData], float | int | None] = lambda d: None
+    value_fn: Callable[[PumpData], float | int | None] = field(default=lambda d: None)
 
 
 SENSOR_DESCRIPTIONS: tuple[Alpha2GoSensorDescription, ...] = (
@@ -49,7 +40,6 @@ SENSOR_DESCRIPTIONS: tuple[Alpha2GoSensorDescription, ...] = (
         key="flow",
         name="Débit",
         native_unit_of_measurement=UNIT_FLOW,
-        device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:water-pump",
         value_fn=lambda d: d.flow,
@@ -58,7 +48,6 @@ SENSOR_DESCRIPTIONS: tuple[Alpha2GoSensorDescription, ...] = (
         key="head",
         name="Hauteur manométrique",
         native_unit_of_measurement=UNIT_HEAD,
-        device_class=None,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:arrow-up-bold",
         value_fn=lambda d: d.head,
@@ -66,8 +55,7 @@ SENSOR_DESCRIPTIONS: tuple[Alpha2GoSensorDescription, ...] = (
     Alpha2GoSensorDescription(
         key="speed",
         name="Vitesse",
-        native_unit_of_measurement=REVOLUTIONS_PER_MINUTE,
-        device_class=None,
+        native_unit_of_measurement=UNIT_RPM,
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:rotate-right",
         value_fn=lambda d: d.speed,
@@ -107,18 +95,14 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Alpha2 Go sensors from a config entry."""
     coordinator: Alpha2GoCoordinator = hass.data[DOMAIN][entry.entry_id]
-
     async_add_entities(
-        Alpha2GoSensorEntity(coordinator, entry, description)
-        for description in SENSOR_DESCRIPTIONS
+        Alpha2GoSensorEntity(coordinator, entry, desc)
+        for desc in SENSOR_DESCRIPTIONS
     )
 
 
 class Alpha2GoSensorEntity(CoordinatorEntity[Alpha2GoCoordinator], SensorEntity):
-    """A single sensor entity backed by the Alpha2Go coordinator."""
-
     entity_description: Alpha2GoSensorDescription
     _attr_has_entity_name = True
 
@@ -130,7 +114,6 @@ class Alpha2GoSensorEntity(CoordinatorEntity[Alpha2GoCoordinator], SensorEntity)
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
-        self._entry = entry
         self._attr_unique_id = f"{entry.data[CONF_ADDRESS]}_{description.key}"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.data[CONF_ADDRESS])},
@@ -141,7 +124,6 @@ class Alpha2GoSensorEntity(CoordinatorEntity[Alpha2GoCoordinator], SensorEntity)
 
     @property
     def native_value(self) -> float | int | None:
-        """Return current sensor value from the coordinator's data."""
         if self.coordinator.data is None:
             return None
         return self.entity_description.value_fn(self.coordinator.data)
