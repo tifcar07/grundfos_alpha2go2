@@ -1,4 +1,4 @@
-"""Sensor platform for Grundfos Alpha2 Go - v1.1.0"""
+"""Sensor platform for Grundfos Alpha2 Go v1.2.0"""
 
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -22,15 +22,23 @@ from .genibus import PumpData
 
 @dataclass(frozen=True)
 class Alpha2GoSensorDescription(SensorEntityDescription):
-    value_fn: Callable[[PumpData], str | float | int | None] = field(default=lambda d: None)
+    value_fn: Callable[[PumpData], str | float | int | None] = field(
+        default=lambda d: None
+    )
 
 
 SENSOR_DESCRIPTIONS: tuple[Alpha2GoSensorDescription, ...] = (
     Alpha2GoSensorDescription(
         key="connected",
-        name="Statut connexion",
+        name="Statut",
         icon="mdi:bluetooth-connect",
         value_fn=lambda d: "Connecté" if d.connected else "Déconnecté",
+    ),
+    Alpha2GoSensorDescription(
+        key="device_name",
+        name="Nom",
+        icon="mdi:tag",
+        value_fn=lambda d: d.device_name,
     ),
     Alpha2GoSensorDescription(
         key="model",
@@ -43,6 +51,13 @@ SENSOR_DESCRIPTIONS: tuple[Alpha2GoSensorDescription, ...] = (
         name="Firmware",
         icon="mdi:chip",
         value_fn=lambda d: d.firmware,
+    ),
+    Alpha2GoSensorDescription(
+        key="notifications",
+        name="Activité (notifications)",
+        icon="mdi:wave",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda d: d.notifications,
     ),
 )
 
