@@ -32,7 +32,6 @@ CONNECT_TIMEOUT = 20.0
 CONNECT_GUARD_TIMEOUT = 25.0
 DISCONNECT_TIMEOUT = 10.0
 
-
 @dataclass
 class PumpData:
     """Pump state read from Bluetooth."""
