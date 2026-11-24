@@ -2,21 +2,20 @@
 
 DOMAIN = "grundfos_alpha2go"
 
-# Config entry keys
 CONF_ADDRESS = "address"
-CONF_NAME    = "name"
+CONF_NAME = "name"
 
-# Default values
-DEFAULT_NAME          = "Alpha2 Go"
-DEFAULT_SCAN_INTERVAL = 30   # seconds
-
-# BLE device prefix (Grundfos pumps advertise with this name prefix)
+DEFAULT_NAME = "Alpha2 Go"
 DEVICE_NAME_PREFIX = "Alpha"
+GRUNDFOS_MANUFACTURER_ID = 1183
 
-# Attributes
-ATTR_FLOW    = "flow"
-ATTR_HEAD    = "head"
-ATTR_SPEED   = "speed"
-ATTR_POWER   = "power"
-ATTR_VOLTAGE = "voltage"
-ATTR_CURRENT = "current"
+# Intervalle de lecture GENIbus (connexion courte, puis déconnexion).
+# 120 s suffit largement pour savoir si un circulateur tourne.
+DEFAULT_SCAN_INTERVAL = 120
+
+# Seuils "pompe en marche"
+RUNNING_POWER_THRESHOLD_W = 3.0
+RUNNING_SPEED_THRESHOLD_RPM = 100.0
+
+# Anciennes clés d'entités (v1.x) supprimées automatiquement au démarrage
+LEGACY_SENSOR_KEYS = ("connected", "device_name", "model", "firmware", "notifications")

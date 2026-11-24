@@ -1,129 +1,64 @@
-![Alpha2 Go](hacs.png)
+<img src="hacs.png" alt="Grundfos Alpha2 Go" width="120"/>
 
 # Grundfos Alpha2 Go — Intégration HACS pour Home Assistant
 
-Intégration Home Assistant pour le circulateur **Grundfos Alpha2 Go** via Bluetooth LE (protocole GENIbus).
+Intégration locale (Bluetooth LE, protocole GENIbus) pour le circulateur **Grundfos Alpha2 Go**. Lecture seule : la pompe n'est jamais pilotée.
 
----
+## Entités
 
-## Capteurs exposés
-
-| Capteur | Unité | Description |
+| Entité | Type | Source |
 |---|---|---|
-| Débit | m³/h | Volume d'eau circulant |
-| Hauteur manométrique | m | Pression générée (hauteur HMT) |
-| Vitesse | RPM | Vitesse de rotation du rotor |
-| Puissance | W | Consommation électrique |
-| Tension | V | Tension d'alimentation |
-| Intensité | A | Courant absorbé |
-
----
+| Joignable | `binary_sensor` (connectivity) | Annonces BLE reçues — **aucune connexion ouverte** |
+| En marche | `binary_sensor` (running) | Puissance ≥ 3 W ou vitesse ≥ 100 tr/min |
+| Puissance | `sensor` (W) | GENIbus |
+| Vitesse | `sensor` (tr/min) | GENIbus |
+| Tension, Courant | `sensor` (désactivés par défaut) | GENIbus |
 
 ## Prérequis
 
-- Home Assistant **2024.1+** avec Bluetooth activé (clé USB Bluetooth ou Raspberry Pi intégré)
-- Pompe **Grundfos Alpha2 Go** couplée via l'application **GrundfosGo** puis découplée (la pompe ne peut maintenir qu'une connexion BLE à la fois)
-- Python `bleak` (installé automatiquement)
-
-> **Important :** La pompe ne supporte qu'**une seule connexion BLE simultanée**. Déconnectez votre téléphone de l'application avant qu'Home Assistant ne sonde la pompe.
-
----
+- Home Assistant **2024.12** ou plus récent, avec Bluetooth (adaptateur local ou proxy ESPHome)
+- La pompe n'accepte qu'**une connexion BLE à la fois** : fermez l'application Grundfos GO
 
 ## Installation via HACS
 
-1. Dans HACS → **Intégrations** → menu ⋮ → **Dépôts personnalisés**
-2. Ajoutez : `https://github.com/VOTRE_GITHUB/grundfos_alpha2go` — catégorie **Integration**
-3. Installez **Grundfos Alpha2 Go**
-4. Redémarrez Home Assistant
+1. HACS → ⋮ → **Dépôts personnalisés**
+2. Ajoutez `https://github.com/tifcar07/grundfos_alpha2go2` — catégorie **Integration**
+3. Installez **Grundfos Alpha2 Go**, puis redémarrez Home Assistant
+4. Paramètres → Appareils et services → **Ajouter une intégration** → Grundfos Alpha2 Go
 
-## Configuration
+La pompe est normalement découverte automatiquement. Sinon, choisissez « Saisir manuellement » et entrez son adresse MAC (`AA:BB:CC:DD:EE:FF`).
 
-1. **Paramètres** → **Appareils & services** → **Ajouter une intégration**
-2. Recherchez **Grundfos Alpha2 Go**
-3. Sélectionnez la pompe détectée automatiquement **ou** saisissez son adresse MAC manuellement
+## Fonctionnement
 
-### Trouver l'adresse MAC manuellement
+- **Joignable** : écoute passive des annonces BLE via la pile Bluetooth de Home Assistant.
+- **Lecture GENIbus** toutes les 120 s : connexion courte (`bleak-retry-connector`), requête « power », réponse par notification, puis **déconnexion systématique** (`finally`). Aucune connexion n'est laissée ouverte entre deux lectures.
+- Les échecs de lecture sont journalisés une seule fois par le coordinateur (pas de flood de logs).
 
-- Dans l'application **GrundfosGo** → informations de la pompe
-- Ou via `bluetoothctl scan on` sur le serveur HA
-
-### Couplage initial
-
-La pompe doit être **couplée** à Home Assistant :
-
-1. Appuyez sur le **bouton de connectivité** (symbole Wi-Fi) de la pompe
-2. Le voyant bleu clignote → connexion disponible
-3. Lancez la configuration dans HA → la connexion s'établit automatiquement
-
----
-
-## Architecture technique
-
-```
-Home Assistant
-  └── grundfos_alpha2go (intégration HACS)
-       ├── Alpha2GoCoordinator  (DataUpdateCoordinator, polling toutes les 30 s)
-       ├── Alpha2GoClient       (connexion BLE via bleak)
-       │    └── BLE GATT ──────────────────── Alpha2 Go
-       │         Service  : 8e7f1a04-...      (GENIbus)
-       │         TX char  : 8e7f1a06-...      (écriture requêtes)
-       │         RX char  : 8e7f1a05-...      (notifications réponses)
-       └── 6 × SensorEntity     (flow, head, speed, power, voltage, current)
-```
-
-### Protocole GENIbus sur BLE
-
-La pompe utilise le protocole propriétaire **GENIbus** de Grundfos, encapsulé en GATT :
-
-```
-Trame requête :  [0x27] [LE] [0x20] [0x01] [0x02] [IDs...] [CS]
-Trame réponse :  [0x27] [LE] [DA]   [SA]   [PDU]  [DATA..] [CS]
-  PDU = 0x06 (données mesurées, standard Alpha3)
-      | 0x30 (données étendues, observé sur Alpha2 Go)
-```
-
----
+Trames GENIbus reprises du composant ESPHome `alpha3` (service `FE5D`, caractéristique `859cffd1-036e-432a-aa28-1a0085b87ba9`).
 
 ## Dépannage
 
-### La pompe n'apparaît pas dans la découverte automatique
+Activez les logs de debug :
 
-- Vérifiez que le Bluetooth est activé dans HA (Paramètres → Système → Matériel)
-- La pompe doit être à portée (≤ 10 m)
-- Utilisez l'entrée manuelle avec l'adresse MAC
+```yaml
+logger:
+  logs:
+    custom_components.grundfos_alpha2go: debug
+```
 
-### Les valeurs sont `Indisponible`
+| Message | Signification |
+|---|---|
+| `Trame power : …` | Lecture réussie |
+| `type de réponse non reconnu […] — trame : …` | La pompe répond dans un autre format : ouvrez une issue avec la trame |
+| `Réponse incomplète (0 octets)` | Pas de réponse : couplage Bluetooth probablement nécessaire |
+| `pompe non visible par le Bluetooth` | Hors de portée de l'adaptateur / du proxy |
 
-- La pompe peut être déjà connectée à l'app mobile — fermez l'application
-- Vérifiez les logs HA : `Paramètres → Système → Journaux → grundfos_alpha2go`
+## Historique
 
-### PDU type inconnu (`Type 48` / `0x30`)
+- **2.0.0** — Réécriture : connexion courte par lecture (corrige la fuite de descripteurs et le flood « disconnected »), lecture GENIbus réelle, capteurs Joignable / En marche / Puissance / Vitesse, correction de la saisie manuelle.
+- **1.x** — Lecture du nom, modèle et firmware uniquement.
 
-Ce type de réponse est typique des **Alpha2 Go et Alpha3 récents**. L'intégration tente de le décoder automatiquement. Si les valeurs semblent incorrectes :
+## Licence et remerciements
 
-1. Activez les logs DEBUG dans `configuration.yaml` :
-   ```yaml
-   logger:
-     logs:
-       custom_components.grundfos_alpha2go: debug
-   ```
-2. Ouvrez une [issue GitHub](https://github.com/VOTRE_GITHUB/grundfos_alpha2go/issues) avec les octets bruts
-
----
-
-## Contribuer
-
-Les contributions sont les bienvenues, notamment pour :
-- Valider / affiner le décodage du PDU `0x30`
-- Ajouter le contrôle de la pompe (changement de mode)
-- Support d'autres modèles Grundfos (Magna3, etc.)
-
----
-
-## Licences et remerciements
-
-- Protocole BLE/GENIbus reverse-engineered depuis :
-  - [ESPHome Alpha3 component](https://github.com/esphome/esphome/pull/3787) par [@jan-hofmeier](https://github.com/jan-hofmeier)
-  - [openHAB Grundfos Alpha binding](https://www.openhab.org/addons/bindings/bluetooth.grundfosalpha/)
-  - [AlphaDecoder](https://github.com/JsBergbau/AlphaDecoder) par [@JsBergbau](https://github.com/JsBergbau)
-- Licence : MIT
+- Licence : GPL-3.0 (voir `LICENSE`)
+- Protocole : [ESPHome alpha3](https://esphome.io/components/sensor/alpha3.html), [AlphaDecoder](https://github.com/JsBergbau/AlphaDecoder), binding openHAB GrundfosAlpha

@@ -1,27 +1,33 @@
 {
   "config": {
+    "flow_title": "{name}",
     "step": {
       "user": {
         "title": "Grundfos Alpha2 Go",
-        "description": "Select your pump or enter its Bluetooth address manually.\n\nTo pair the pump, press the connectivity button (Wi-Fi symbol) until the blue LED blinks.",
+        "description": "Select your detected pump, or \"manual entry\".",
         "data": {
-          "address": "Bluetooth Address (MAC)",
-          "name": "Pump Name"
+          "address": "Pump",
+          "name": "Pump name"
+        }
+      },
+      "manual": {
+        "title": "Manual entry",
+        "description": "Bluetooth address, format AA:BB:CC:DD:EE:FF.",
+        "data": {
+          "address": "Bluetooth address (MAC)",
+          "name": "Pump name"
         }
       },
       "bluetooth_confirm": {
-        "title": "Grundfos Alpha2 Go Detected",
-        "description": "Add **{name}** ({address})?\n\nMake sure the pump is paired to this Home Assistant instance (connectivity button)."
+        "title": "Grundfos Alpha2 Go discovered",
+        "description": "Add **{name}** ({address})?"
       }
     },
-    "abort": {
-      "already_configured": "This pump is already configured.",
-      "no_devices_found": "No Grundfos pump found. Check Bluetooth and range."
-    },
     "error": {
-      "cannot_connect": "Cannot connect to the pump. Make sure it is powered and within Bluetooth range.",
-      "unknown": "Unknown error."
+      "invalid_address": "Invalid MAC address (format AA:BB:CC:DD:EE:FF)."
+    },
+    "abort": {
+      "already_configured": "This pump is already configured."
     }
-  },
-  "options": {}
+  }
 }
