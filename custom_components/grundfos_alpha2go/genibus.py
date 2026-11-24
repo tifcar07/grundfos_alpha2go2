@@ -1,162 +1,178 @@
-"""BLE client for Grundfos Alpha2 Go - defensive connection cleanup.
+"""Client GENIbus over BLE pour Grundfos Alpha2 Go (lecture seule).
 
-Preserves existing read-only functionality. The pump itself is not controlled.
-This is a proposed patch; verify on a test system before deployment.
+Principe : une connexion COURTE par lecture.
+  connexion -> abonnement notifications -> requête GENIbus "power"
+  -> attente réponse -> désabonnement -> déconnexion (toujours, via finally).
+
+Trames reprises du composant ESPHome `alpha3` (même service BLE FE5D /
+caractéristique 859cffd1-...). Compatibilité Alpha2 Go à valider : en cas de
+réponse inconnue, la trame brute est journalisée en DEBUG.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import math
+import struct
 from dataclasses import dataclass
 
-from bleak import BleakClient
+from bleak.backends.device import BLEDevice
+from bleak.exc import BleakError
+from bleak_retry_connector import (
+    BleakClientWithServiceCache,
+    BleakNotFoundError,
+    establish_connection,
+)
+
+from .const import RUNNING_POWER_THRESHOLD_W, RUNNING_SPEED_THRESHOLD_RPM
 
 _LOGGER = logging.getLogger(__name__)
 
-# Standard Device Information service (180A)
-DEVICE_INFO_SERVICE = "0000180a-0000-1000-8000-00805f9b34fb"
-CHAR_MODEL_NUMBER = "00002a24-0000-1000-8000-00805f9b34fb"
-CHAR_FIRMWARE = "00002a26-0000-1000-8000-00805f9b34fb"
+GENI_SERVICE_UUID = "0000fe5d-0000-1000-8000-00805f9b34fb"
+GENI_CHAR_UUID = "859cffd1-036e-432a-aa28-1a0085b87ba9"
 
-# Generic Access service (1800)
-CHAR_DEVICE_NAME = "00002a00-0000-1000-8000-00805f9b34fb"
+# Requête "power" (ESPHome alpha3) : tension, courant, puissance, vitesse
+REQUEST_POWER = bytes([0x27, 0x07, 0xE7, 0xF8, 0x0A, 0x03, 0x57, 0x00, 0x45, 0x8A, 0xCD])
 
-# Grundfos proprietary service & characteristic
-GRUNDFOS_SERVICE_UUID = "0000fe5d-0000-1000-8000-00805f9b34fb"
-GRUNDFOS_CHAR_UUID = "859cffd1-036e-432a-aa28-1a0085b87ba9"
-# Compatibility alias for config_flow.py in repository main branch.
-GENI_SERVICE_UUID = GRUNDFOS_SERVICE_UUID
+RESPONSE_START = 0x24
+RESPONSE_HEADER_LENGTH = 13
+RESPONSE_TYPE_POWER = bytes([44, 0, 1, 0, 1, 0, 0, 37])
+OFFSET_VOLTAGE_AC = 0
+OFFSET_CURRENT = 8
+OFFSET_POWER = 12
+OFFSET_SPEED = 20
+# Octets nécessaires pour lire jusqu'à la vitesse incluse
+MIN_POWER_FRAME = RESPONSE_HEADER_LENGTH + OFFSET_SPEED + 4
 
-CONNECT_TIMEOUT = 20.0
-CONNECT_GUARD_TIMEOUT = 25.0
+RESPONSE_TIMEOUT = 5.0
 DISCONNECT_TIMEOUT = 10.0
+OVERALL_TIMEOUT = 60.0
+
+
+class GenibusError(Exception):
+    """Lecture GENIbus impossible."""
 
 
 @dataclass
 class PumpData:
-    """Pump state read from Bluetooth."""
+    """Valeurs lues sur la pompe."""
 
-    model: str | None = None
-    firmware: str | None = None
-    device_name: str | None = None
-    connected: bool = False
-    rssi: int | None = None
-    notifications: int = 0
+    power: float | None = None  # W
+    speed: float | None = None  # tr/min
+    voltage: float | None = None  # V
+    current: float | None = None  # A
+
+    @property
+    def running(self) -> bool | None:
+        if self.power is None and self.speed is None:
+            return None
+        return (self.power or 0.0) >= RUNNING_POWER_THRESHOLD_W or (
+            self.speed or 0.0
+        ) >= RUNNING_SPEED_THRESHOLD_RPM
 
 
 class Alpha2GoClient:
-    """Maintain one BLE connection and clean up failed sessions."""
+    """Une lecture = une connexion courte, toujours refermée."""
 
     def __init__(self, address: str) -> None:
-        self._address = address
-        self._client: BleakClient | None = None
-        self._notification_count = 0
+        self.address = address.upper()
         self._lock = asyncio.Lock()
+        self._expected_disconnect = False
 
-    @property
-    def is_connected(self) -> bool:
-        return self._client is not None and self._client.is_connected
+    def _on_disconnect(self, _client: BleakClientWithServiceCache) -> None:
+        if self._expected_disconnect:
+            _LOGGER.debug("Alpha2 Go %s : déconnexion normale", self.address)
+        else:
+            _LOGGER.debug(
+                "Alpha2 Go %s : connexion coupée par la pompe pendant la lecture",
+                self.address,
+            )
 
-    def _on_disconnect(self, client: BleakClient) -> None:
-        # Do not overwrite self._client here. Retaining the old client lets
-        # disconnect() / the next reconnect attempt clean up its resources.
-        _LOGGER.warning("Alpha2 Go %s disconnected", self._address)
+    async def async_read(self, ble_device: BLEDevice) -> PumpData:
+        """Lire puissance/vitesse. Lève GenibusError en cas d'échec."""
+        async with self._lock:
+            try:
+                async with asyncio.timeout(OVERALL_TIMEOUT):
+                    return await self._read_locked(ble_device)
+            except TimeoutError as err:
+                raise GenibusError("délai global dépassé") from err
+            except BleakNotFoundError as err:
+                raise GenibusError("pompe introuvable (hors de portée ?)") from err
+            except BleakError as err:
+                raise GenibusError(f"erreur BLE : {err}") from err
 
-    def _on_notify(self, _handle: int, data: bytes) -> None:
-        self._notification_count += 1
-        _LOGGER.debug(
-            "BLE notify #%d from pump: %s", self._notification_count, data.hex()
+    async def _read_locked(self, ble_device: BLEDevice) -> PumpData:
+        buffer = bytearray()
+        complete = asyncio.Event()
+
+        def _on_notify(_char: object, data: bytearray) -> None:
+            if not buffer and (len(data) < 5 or data[0] != RESPONSE_START):
+                _LOGGER.debug("Notification ignorée : %s", bytes(data).hex())
+                return
+            buffer.extend(data)
+            if len(buffer) >= MIN_POWER_FRAME:
+                complete.set()
+
+        self._expected_disconnect = False
+        client = await establish_connection(
+            BleakClientWithServiceCache,
+            ble_device,
+            f"Alpha2 Go {self.address}",
+            disconnected_callback=self._on_disconnect,
+            max_attempts=3,
         )
-
-    async def _disconnect_locked(self) -> None:
-        """Dispose of the previous Bleak client, even after failed connect."""
-        client = self._client
-        self._client = None
-        if client is None:
-            return
         try:
-            # Bleak disconnect is also the documented resource-cleanup path.
-            await asyncio.wait_for(client.disconnect(), timeout=DISCONNECT_TIMEOUT)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            _LOGGER.warning(
-                "Could not fully clean up Alpha2 Go BLE client: %s", exc
-            )
-
-    async def _connect_locked(self) -> None:
-        """Start a new BLE session after cleaning up any abandoned client."""
-        await self._disconnect_locked()
-        client = BleakClient(self._address, disconnected_callback=self._on_disconnect)
-        self._client = client
-        try:
-            await asyncio.wait_for(
-                client.connect(timeout=CONNECT_TIMEOUT),
-                timeout=CONNECT_GUARD_TIMEOUT,
-            )
-            _LOGGER.info("Connected to Alpha2 Go %s", self._address)
+            await client.start_notify(GENI_CHAR_UUID, _on_notify)
+            await client.write_gatt_char(GENI_CHAR_UUID, REQUEST_POWER, response=False)
             try:
-                await client.start_notify(GRUNDFOS_CHAR_UUID, self._on_notify)
-            except Exception as exc:
-                # Notification availability is optional for the identity reads.
-                _LOGGER.debug("Could not enable notifications: %s", exc)
-        except asyncio.CancelledError:
-            await self._disconnect_locked()
-            raise
-        except Exception:
-            await self._disconnect_locked()
-            raise
-
-    async def connect(self) -> None:
-        """Connect explicitly; serialized with polling and unload."""
-        async with self._lock:
-            if not self.is_connected:
-                await self._connect_locked()
-
-    async def disconnect(self) -> None:
-        """Close BLE session on unload or after a fault."""
-        async with self._lock:
-            await self._disconnect_locked()
-
-    async def _read_char(self, uuid: str) -> str | None:
-        client = self._client
-        if client is None or not client.is_connected:
-            return None
-        try:
-            data = await client.read_gatt_char(uuid)
-            return data.decode("utf-8", errors="ignore").strip("\x00").strip()
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            _LOGGER.debug("Cannot read %s: %s", uuid, exc)
-            return None
-
-    async def poll(self, timeout: float = 25.0) -> PumpData | None:
-        """Read pump identity. Keep the BLE connection only while healthy."""
-        async with self._lock:
-            if not self.is_connected:
-                try:
-                    # The guard is >= the Bleak connect timeout (20 seconds).
-                    await asyncio.wait_for(self._connect_locked(), timeout=timeout)
-                except asyncio.CancelledError:
-                    await self._disconnect_locked()
-                    raise
-                except Exception as exc:
-                    await self._disconnect_locked()
-                    _LOGGER.warning(
-                        "Cannot connect to Alpha2 Go %s: %s", self._address, exc
-                    )
-                    return None
-            try:
-                data = PumpData(
-                    connected=self.is_connected,
-                    notifications=self._notification_count,
+                async with asyncio.timeout(RESPONSE_TIMEOUT):
+                    await complete.wait()
+            except TimeoutError:
+                _LOGGER.debug(
+                    "Réponse incomplète (%d octets) : %s", len(buffer), buffer.hex()
                 )
-                data.device_name = await self._read_char(CHAR_DEVICE_NAME)
-                data.model = await self._read_char(CHAR_MODEL_NUMBER)
-                data.firmware = await self._read_char(CHAR_FIRMWARE)
-                return data
-            except asyncio.CancelledError:
-                await self._disconnect_locked()
-                raise
+        finally:
+            self._expected_disconnect = True
+            if client.is_connected:
+                with contextlib.suppress(BleakError, TimeoutError):
+                    await client.stop_notify(GENI_CHAR_UUID)
+            try:
+                async with asyncio.timeout(DISCONNECT_TIMEOUT):
+                    await client.disconnect()
+            except (BleakError, TimeoutError) as err:
+                _LOGGER.debug("Déconnexion incomplète : %s", err)
+
+        return self._parse(bytes(buffer))
+
+    @staticmethod
+    def _parse(frame: bytes) -> PumpData:
+        if len(frame) < RESPONSE_HEADER_LENGTH:
+            raise GenibusError(
+                f"réponse trop courte ({len(frame)} octets) : {frame.hex() or 'vide'}"
+            )
+        if frame[0] != RESPONSE_START or frame[2] != 0xF8 or frame[3] != 0xE7:
+            raise GenibusError(f"en-tête inattendu : {frame[:5].hex()}")
+        response_type = frame[5:RESPONSE_HEADER_LENGTH]
+        if response_type != RESPONSE_TYPE_POWER:
+            raise GenibusError(
+                f"type de réponse non reconnu {list(response_type)} — trame : {frame.hex()}"
+            )
+        _LOGGER.debug("Trame power : %s", frame.hex())
+
+        def _float(offset: int) -> float | None:
+            start = RESPONSE_HEADER_LENGTH + offset
+            if len(frame) < start + 4:
+                return None
+            value = struct.unpack(">f", frame[start : start + 4])[0]
+            if math.isnan(value) or math.isinf(value) or abs(value) > 1e6:
+                return None
+            return round(value, 2)
+
+        return PumpData(
+            voltage=_float(OFFSET_VOLTAGE_AC),
+            current=_float(OFFSET_CURRENT),
+            power=_float(OFFSET_POWER),
+            speed=_float(OFFSET_SPEED),
+        )
