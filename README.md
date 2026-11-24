@@ -13,6 +13,7 @@ Intégration locale (Bluetooth LE, protocole GENIbus) pour le circulateur **Grun
 | Puissance | `sensor` (W) | GENIbus |
 | Vitesse | `sensor` (tr/min) | GENIbus |
 | Tension, Courant | `sensor` (désactivés par défaut) | GENIbus |
+| Appairer | `button` (configuration) | Appairage BLE (bonding) |
 
 ## Prérequis
 
@@ -27,6 +28,16 @@ Intégration locale (Bluetooth LE, protocole GENIbus) pour le circulateur **Grun
 4. Paramètres → Appareils et services → **Ajouter une intégration** → Grundfos Alpha2 Go
 
 La pompe est normalement découverte automatiquement. Sinon, choisissez « Saisir manuellement » et entrez son adresse MAC (`AA:BB:CC:DD:EE:FF`).
+
+## Appairage (obligatoire pour la lecture GENIbus)
+
+La pompe ne répond aux requêtes GENIbus qu'après un appairage chiffré :
+
+1. Appuyez sur le **bouton de connectivité** de la pompe jusqu'à ce que le voyant bleu clignote
+2. Dans les 30 secondes : Appareil **Alpha2 Go** → bouton **Appairer**
+3. La lecture suivante doit remonter Puissance / Vitesse / En marche
+
+L'appairage est mémorisé par l'adaptateur Bluetooth (ou le proxy ESPHome) qui l'a réalisé.
 
 ## Fonctionnement
 
@@ -50,11 +61,12 @@ logger:
 |---|---|
 | `Trame power : …` | Lecture réussie |
 | `type de réponse non reconnu […] — trame : …` | La pompe répond dans un autre format : ouvrez une issue avec la trame |
-| `Réponse incomplète (0 octets)` | Pas de réponse : couplage Bluetooth probablement nécessaire |
+| `aucune réponse de la pompe` | Appairage nécessaire : voir la section Appairage |
 | `pompe non visible par le Bluetooth` | Hors de portée de l'adaptateur / du proxy |
 
 ## Historique
 
+- **2.0.1** — Bouton « Appairer » (bonding BLE), message d'erreur explicite en l'absence de réponse.
 - **2.0.0** — Réécriture : connexion courte par lecture (corrige la fuite de descripteurs et le flood « disconnected »), lecture GENIbus réelle, capteurs Joignable / En marche / Puissance / Vitesse, correction de la saisie manuelle.
 - **1.x** — Lecture du nom, modèle et firmware uniquement.
 

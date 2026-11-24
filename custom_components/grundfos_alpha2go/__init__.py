@@ -25,7 +25,7 @@ from .genibus import Alpha2GoClient, GenibusError, PumpData
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.SENSOR]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.BUTTON, Platform.SENSOR]
 
 
 def build_device_info(entry: ConfigEntry) -> DeviceInfo:

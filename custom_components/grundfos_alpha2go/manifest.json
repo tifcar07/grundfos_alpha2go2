@@ -15,5 +15,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/tifcar07/grundfos_alpha2go2/issues",
   "requirements": ["bleak-retry-connector>=3.0.0"],
-  "version": "2.0.0"
+  "version": "2.0.1"
 }

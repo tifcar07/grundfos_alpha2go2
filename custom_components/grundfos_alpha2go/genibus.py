@@ -115,14 +115,7 @@ class Alpha2GoClient:
             if len(buffer) >= MIN_POWER_FRAME:
                 complete.set()
 
-        self._expected_disconnect = False
-        client = await establish_connection(
-            BleakClientWithServiceCache,
-            ble_device,
-            f"Alpha2 Go {self.address}",
-            disconnected_callback=self._on_disconnect,
-            max_attempts=3,
-        )
+        client = await self._connect(ble_device)
         try:
             await client.start_notify(GENI_CHAR_UUID, _on_notify)
             await client.write_gatt_char(GENI_CHAR_UUID, REQUEST_POWER, response=False)
@@ -138,13 +131,52 @@ class Alpha2GoClient:
             if client.is_connected:
                 with contextlib.suppress(BleakError, TimeoutError):
                     await client.stop_notify(GENI_CHAR_UUID)
-            try:
-                async with asyncio.timeout(DISCONNECT_TIMEOUT):
-                    await client.disconnect()
-            except (BleakError, TimeoutError) as err:
-                _LOGGER.debug("Déconnexion incomplète : %s", err)
+            await self._safe_disconnect(client)
 
+        if not buffer:
+            raise GenibusError(
+                "aucune réponse de la pompe — appairage probablement nécessaire "
+                "(bouton « Appairer » de l'appareil)"
+            )
         return self._parse(bytes(buffer))
+
+    async def _connect(self, ble_device: BLEDevice) -> BleakClientWithServiceCache:
+        self._expected_disconnect = False
+        return await establish_connection(
+            BleakClientWithServiceCache,
+            ble_device,
+            f"Alpha2 Go {self.address}",
+            disconnected_callback=self._on_disconnect,
+            max_attempts=3,
+        )
+
+    async def _safe_disconnect(self, client: BleakClientWithServiceCache) -> None:
+        self._expected_disconnect = True
+        try:
+            async with asyncio.timeout(DISCONNECT_TIMEOUT):
+                await client.disconnect()
+        except (BleakError, TimeoutError) as err:
+            _LOGGER.debug("Déconnexion incomplète : %s", err)
+
+    async def async_pair(self, ble_device: BLEDevice) -> None:
+        """Appairage (bonding) BLE. Le bouton de connectivité de la pompe doit être actif."""
+        async with self._lock:
+            try:
+                async with asyncio.timeout(OVERALL_TIMEOUT):
+                    client = await self._connect(ble_device)
+                    try:
+                        await client.pair()
+                    finally:
+                        await self._safe_disconnect(client)
+            except NotImplementedError as err:
+                raise GenibusError(
+                    "appairage non supporté par cet adaptateur / proxy Bluetooth"
+                ) from err
+            except TimeoutError as err:
+                raise GenibusError("délai dépassé pendant l'appairage") from err
+            except BleakError as err:
+                raise GenibusError(f"erreur BLE : {err}") from err
+        _LOGGER.info("Alpha2 Go %s : appairage réussi", self.address)
 
     @staticmethod
     def _parse(frame: bytes) -> PumpData:
